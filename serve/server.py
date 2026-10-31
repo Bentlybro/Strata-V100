@@ -40,6 +40,7 @@ import os
 import queue
 import re
 import select
+import shlex
 import signal
 import socket
 import struct
@@ -1177,7 +1178,9 @@ class StrataEngine:
             pin["preexec_fn"] = lambda: os.sched_setaffinity(0, cpus)
         end_leftover_engines(exe)                        # one an earlier run lost still holds the GPU and the memory
         spawned_at = time.monotonic()
-        self.proc = popen("the Strata engine", [exe, "--serve", *args], cwd=cwd, stdin=subprocess.PIPE,
+        # STRATA_ENGINE_WRAP: a debugging prefix for the engine command (e.g. "compute-sanitizer --tool memcheck"); off when unset
+        wrap = shlex.split(os.environ.get("STRATA_ENGINE_WRAP", ""))
+        self.proc = popen("the Strata engine", [*wrap, exe, "--serve", *args], cwd=cwd, stdin=subprocess.PIPE,
                           stdout=subprocess.PIPE, stderr=self.log, text=True, encoding="utf-8", bufsize=1, env=env, **pin)
         # the READY read has a timeout (#1317): the lines come from a thread, up to READY, so the rest of the stream
         # stays for _pump (one reader at a time)
