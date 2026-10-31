@@ -12,6 +12,13 @@ ROOT = Path(__file__).resolve().parents[1]
 PREAMBLE = ("Still over-long, and the inline dict-comprehension monsters keep producing invalid syntax. "
             "Decisive fix: **the long rationale belongs in FINDINGS.md, not in the tool** — short docstring, "
             "plain loops, build dicts with simple statements. Writing minimal and validating immediately:")
+COPY_PREAMBLE = ("The earlier combined cp+heredoc failed to *parse*, so nothing ran. "
+                 "Doing the copy as its own clean command first:")
+SCREENSHOT_PREAMBLE = (
+    'The floor math is verified, but my ad-hoc check mixed two different `total_steps` '
+    '(I passed `C.FINETUNE` with `epochs=40` to `lr_at` while computing the final step with 12). '
+    'Inside `run_stage`, `cfg["epochs"]` is overridden first, so the code is right and my check '
+    'was wrong. Let me verify properly and add the `--lr-floor` flag.')
 TOOLS = [{"name": "bash", "parameters": {"type": "object", "properties": {"command": {"type": "string"}}}}]
 ARGUMENTS = '<parameter=command>\nprintf health-check\n</parameter>\n</function>\n</tool_call>'
 CALL = '<tool_call>\n<function=bash>\n' + ARGUMENTS
@@ -51,6 +58,21 @@ class ToolCallContinuation(unittest.TestCase):
         self.assertLessEqual(done['completion_tokens'], 2048)
         self.assertLessEqual(engine.caps[1], 2048 - (len(engine.prompts[1]) - len(engine.prompts[0])))
 
+    def test_concrete_operations_and_verb_forms_continue(self):
+        for text in (COPY_PREAMBLE, "Copying the artifact first:", "I am copying the artifact now:",
+                     "Let me do the validation first:", "Next, running the check:",
+                     "Rewriting compact and validating before shipping:",
+                     "Reading scripts/check.py now:", SCREENSHOT_PREAMBLE,
+                     "Let me look at the val curve again:",
+                     "I'll run the check.", "I am going to verify `result.json`."):
+            with self.subTest(text=text):
+                svc, engine, events = self.run_reply(text=text)
+                calls = [e.call for kind, e in events if kind == 'event' and e.kind == 'tool_call']
+                self.assertEqual([(c.name, c.arguments) for c in calls],
+                                 [('bash', {'command': 'printf health-check'})])
+                self.assertEqual(len(engine.prompts), 2)
+                self.assertEqual(svc.totals['tool_call_continuations'], 1)
+
     def test_default_path_and_request_boundaries_do_not_continue(self):
         for options in ({'enabled': False}, {'tools': []}, {'cap': 20},
                         {'cap': len(PREAMBLE.encode()) + 30}, {'cancelled': True},
@@ -64,6 +86,15 @@ class ToolCallContinuation(unittest.TestCase):
     def test_answers_quotes_and_examples_do_not_continue(self):
         for text in ('Done. All checks passed.', 'The results are:', 'Writing is useful.',
                      'I will not run this:', 'I could run this:', 'Let me explain the result:',
+                     'Doing well:', 'Doing nothing:', 'Copying files is useful:',
+                     'Doing the copy only if the user approves:',
+                     'I am not copying the artifact:', 'I would do the copy:',
+                     'Example:\nDoing the copy as its own command:',
+                     'Check the logs for errors.', 'Reading the logs.',
+                     'I will explain the result.', 'I will not verify the result.',
+                     'I would verify the result.', 'Let me verify if you approve.',
+                     'Example: Let me verify the result.',
+                     '"Let me verify the result."', '> Let me verify the result.',
                      '```text\nWriting minimal and validating immediately:\n```',
                      '> Writing minimal and validating immediately:',
                      '"Writing minimal and validating immediately:"',
@@ -94,7 +125,7 @@ class ToolCallContinuation(unittest.TestCase):
             for choice in ('auto', 'none'):
                 with self.subTest(stream=stream, choice=choice):
                     tok = ByteTokenizer()
-                    engine = RecordingEngine(tok, ['Thought.</think>\n' + PREAMBLE, 'bash>\n' + ARGUMENTS])
+                    engine = RecordingEngine(tok, ['Thought.</think>\n' + SCREENSHOT_PREAMBLE, 'bash>\n' + ARGUMENTS])
                     svc = Service(engine, tok, ChatTemplate(ROOT / 'serve/chat_template.jinja'))
                     svc.tool_call_continuation = True
                     httpd = serve(svc, port=0)

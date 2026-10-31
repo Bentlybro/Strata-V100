@@ -182,26 +182,56 @@ ANSWER_RESERVE_MIN = 512      # #984: the tokens kept for the answer when a thin
 REASONING_CLOSE = "\n</think>\n\n"
 REASONING_WRAP_UP = "\n\nI have thought about this long enough; time to give my answer.\n</think>\n\n"
 
-_TOOL_PREAMBLE = re.compile(
-    r"(?:^|[.!?]\s+|\n)\s*(?:"
-    r"(?:I will|I'll|Let me)\s+(?:write|read|run|check|inspect|edit|update|apply|validate)\b|"
-    r"(?:Writing|Reading|Running|Checking|Inspecting|Editing|Updating|Applying|Validating)\b"
-    r")[^.!?\n]{0,240}:\s*$", re.I)
+_TOOL_ACTIONS = frozenset((
+    "write writing rewrite rewriting read reading run running check checking inspect inspecting "
+    "edit editing update updating apply applying validate validating verify verifying look looking "
+    "copy copying move moving save saving execute executing promote promoting"
+).split())
+_TOOL_TASKS = frozenset((
+    "command commands copy copies check checks test tests validation edit edits update updates "
+    "rewrite read write move save execution"
+).split())
+# An explicit first-person promise of work is the only shape allowed to end in a period: "Let me verify ... flag."
+# A bare imperative ("Check the logs for errors.") or a statement is a possible final answer, so it needs the colon.
+_TOOL_INTENT = re.compile(r"^(?:I will|I'll|I am going to|I'm going to|I am|I'm|Let me)\s+", re.I)
+# Inline code naming a flag, path or value is part of an action sentence ("add the `--lr-floor` flag"). Fenced blocks
+# are rejected above; an unpaired backtick still reads as quoted material.
+_INLINE_CODE = re.compile(r"`[^`\n]{1,120}`")
 
 
 def _ends_in_tool_preamble(text: str) -> bool:
     """A narrow action preamble, not a final answer or a quoted example. Only used by the opt-in continuation."""
     if "```" in text or "~~~" in text:
         return False
-    tail = text[-512:].replace("**", "")
+    tail = text[-512:]
     if re.search(r"\b(?:example|quoted|format)\b", tail, re.I):
         return False
-    match = _TOOL_PREAMBLE.search(tail)
-    if not match:
+    tail = _INLINE_CODE.sub(" ", tail).replace("**", "").rstrip("*_").rstrip()
+    if not tail or "`" in tail:
         return False
-    phrase = match.group()
-    return not re.search(r"[`\">]|\b(?:example|quoted|format|if|not|never|could|would|should|cannot)\b|"
-                         r"\b(?:don't|won't|can't)\b", phrase, re.I)
+    # A colon is the strongest opening; a period only counts with the explicit first-person promise below.
+    colon = tail.endswith(":")
+    if not colon and not tail.endswith("."):
+        return False
+    # Examine the final sentence/line, not earlier rationale. Dots inside file names are not sentence boundaries.
+    phrase = re.split(r"[.!?]\s+|\n", tail[:-1])[-1].strip()
+    if len(phrase) > 256 or not re.match(r"[a-z]", phrase, re.I):
+        return False
+    if re.search(r"[\">]|\b(?:if|not|never|could|would|should|cannot|is|are|was|were)\b|"
+                 r"\b(?:don't|won't|can't)\b", phrase, re.I):
+        return False
+    phrase = re.sub(r"^(?:first|next|now)[, ]+\s*", "", phrase, flags=re.I)
+    intent = _TOOL_INTENT.match(phrase) is not None
+    if not (colon or intent):
+        return False
+    phrase = _TOOL_INTENT.sub("", phrase, count=1).strip()
+    words = re.findall(r"[a-z]+(?:'[a-z]+)?", phrase.lower())
+    if not words:
+        return False
+    if words[0] in ("do", "doing"):
+        # "Doing well:" is not a tool action. A light verb must name a concrete operation as well.
+        return bool(_TOOL_TASKS.intersection(words[1:]))
+    return words[0] in _TOOL_ACTIONS
 
 # #728: opt-in handling of reasoning that repeats whole passages (which the single-token guard above cannot see).
 # "reasoning_loop_recovery": "stop" ends the reply there; "recover" (or true) goes on from the same output with the
