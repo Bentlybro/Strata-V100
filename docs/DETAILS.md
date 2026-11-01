@@ -1464,8 +1464,12 @@ print(r.choices[0].message.content)
   that sentence. It does not retry a normal answer that merely promises more work.
 - **An action preamble with no tool call (opt-in).** `"tool_call_continuation": true` handles a narrower kind of
   early stop in the visible answer: an immediate action preamble ending in a colon, such as "Writing minimal
-  and validating immediately:". With tools available, no call already started, and room for at least 64 more
-  tokens after the opening, the server opens the native tool envelope and continues once within the same request.
+  and validating immediately:", or an explicit first-person action promise ending in a period, such as
+  "Let me verify properly and add the `--lr-floor` flag." Inline code naming a flag or path is allowed.
+  Concrete actions include checking, verifying, looking, copying and rewriting. A bare instruction ending
+  in a period, such as "Check the logs.", is not enough. With tools available, no call already started,
+  and room for at least 64 more tokens after the opening, the server opens the native tool envelope and
+  continues once within the same request.
   The model supplies the tool and arguments (the normal required-tool opening names it when only one is available).
   This is a heuristic, not proof of intent: it can mistake prose for an action. Leave it off when that trade-off
   is not wanted. Known code fences, quoted examples, negative or conditional phrases, ordinary final answers,
